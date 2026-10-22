@@ -1,0 +1,21 @@
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = MemoryMapLib
+  FILE_GUID                      = 9a8f3b2c-4d5e-6f7a-8b9c-0d1e2f3a4b5c
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MemoryMapLib
+  CONSTRUCTOR                    = MemoryMapLibConstructor
+  DEPEX                          = gEfiMemoryMapGuid
+
+[Sources]
+  MemoryMapLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib

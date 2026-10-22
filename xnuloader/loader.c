@@ -553,6 +553,19 @@ static const struct platform platform_redwood = {
 	.fb_base = 0xE1000000,
 };
 
+static const struct platform platform_dreamlte = {
+	/* Samsung Galaxy S8 (dreamlte) with Exynos 8895
+	 * Exynos 8895: 4x M2 (2.3 GHz) + 4x Cortex-A53 (1.7 GHz), Mali-G71 MP20
+	 * GICv3, PSCI, UFS storage
+	 * io_base must be non-zero: XNU treats a zero SoC base as "no SoC" and skips clock setup. */
+	.name = "dreamlte", .io_base = 0x10000000, .io_size = 0x30000000,
+	.gic_dist = 0x2C000000, .gic_redist = 0x2C080000, .uart = 0, .log_other_cpu = 1,
+	.cores = 8, .core_shift = 0,
+	/* Small cores: 4x Cortex-A53 (LITTLE cluster), cores 0-3 */
+	.small_cores = 0x0f,
+	.fb_base = 0xE1000000,
+};
+
 /*
  * The devices the loader knows, told apart by the framebuffer base their UEFI reports. A port to another
  * device adds its description here (common/new-device.sh writes a starting point, docs/PORTING.md says
@@ -560,6 +573,7 @@ static const struct platform platform_redwood = {
  */
 static const struct platform *const platforms[] = {
 	&platform_redwood,
+	&platform_dreamlte,
 };
 
 /* ------------------------------------------------------------------------ */

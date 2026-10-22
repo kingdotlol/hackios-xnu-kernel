@@ -1,0 +1,29 @@
+[Defines]
+  FD_BASE_ADDRESS            = 0x7FD00000
+  FD_SIZE                    = 0x00200000
+
+[FD.dreamlte]
+  BASE          = 0x7FD00000
+  SIZE          = 0x00200000
+  BLOCK_SIZE    = 0x00010000
+  ERASABLE      = TRUE
+  FILE  SEC = Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.efi SEC
+  FILE  PEI_CORE = Silicon/Silicium/SiliciumPkg/PeiCore/PeiCore.efi PEI_CORE
+  FILE  PEIM = Silicon/Silicium/SiliciumPkg/Library/MemoryMapLib/MemoryMapLib.efi PEIM
+  FILE  PEIM = Silicon/Silicium/SiliciumPkg/Library/ConfigurationMapLib/ConfigurationMapLib.efi PEIM
+  FILE  DXE_CORE = Silicon/Silicium/SiliciumPkg/DxeCore/DxeCore.efi DXE_CORE
+  FILE  DXE_DRIVER = Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.efi DXE_DRIVER
+  FILE  UEFI_APPLICATION = Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.efi UEFI_APPLICATION
+
+[FV.dreamlte]
+  FILE  FFS = Silicon/Silicium/SiliciumPkg/Library/MemoryMapLib/MemoryMapLib.efi
+  FILE  FFS = Silicon/Silicium/SiliciumPkg/Library/ConfigurationMapLib/ConfigurationMapLib.efi
+  FILE  FFS = Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.efi
+  FILE  FFS = Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/XnuLoader.efi
+
+[Rule.common]
+  INF  = *.inf
+
+[BuildOptions.common]
+  MSFT:*_*_CC_FLAGS = /O2 /GL /W4 /WX- /Zi /Gy /GF /Gm- /EHsc /MD /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /GR- /DUNICODE /D_UNICODE
+  GCC:*_*_CC_FLAGS = -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers

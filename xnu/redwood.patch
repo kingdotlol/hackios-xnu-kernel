@@ -65,41 +65,50 @@ diff --git a/bsd/conf/files b/bsd/conf/files
 index 44274016a4cf..9cd24b42caca 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -109,6 +109,37 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
+@@ -109,6 +109,37 @@ bsd/dev/munge.c			optional config_requires_u32_munging
  bsd/dev/unix_startup.c			standard
  
  bsd/dev/monotonic.c optional monotonic
-+bsd/dev/redwood_input.c		standard
-+bsd/dev/redwood_virtio_input.c	standard
-+bsd/dev/redwood_goodix.c	standard
-+bsd/dev/redwood_buttons.c	standard
-+bsd/dev/redwood_battery.c	standard
-+bsd/dev/redwood_ufs.c	standard
-+bsd/dev/redwood_ufshc.c	standard
-+bsd/dev/redwood_net.c		standard
-+bsd/dev/redwood_virtio_net.c	standard
-+bsd/dev/redwood_apple80211.c	standard
-+bsd/dev/redwood_cpufreq.c	standard
-+bsd/dev/redwood_adreno.c	standard
-+bsd/dev/redwood_audio.c		standard
-+bsd/dev/redwood_virtio_sound.c	standard
-+bsd/dev/redwood_speaker.c	standard
-+bsd/dev/redwood_guard.c		standard
++bsd/dev/redwood_input.c			standard
++bsd/dev/redwood_virtio_input.c		standard
++bsd/dev/redwood_goodix.c			standard
++bsd/dev/redwood_buttons.c		standard
++bsd/dev/redwood_battery.c		standard
++bsd/dev/redwood_ufs.c			standard
++bsd/dev/redwood_ufshc.c		standard
++bsd/dev/redwood_net.c			standard
++bsd/dev/redwood_virtio_net.c		standard
++bsd/dev/redwood_apple80211.c		standard
++bsd/dev/redwood_cpufreq.c		standard
++bsd/dev/redwood_adreno.c		standard
++bsd/dev/redwood_audio.c			standard
++bsd/dev/redwood_virtio_sound.c		standard
++bsd/dev/redwood_speaker.c		standard
++bsd/dev/redwood_guard.c			standard
 +bsd/dev/redwood_haptic.c		standard
 +bsd/dev/redwood_torch.c		standard
-+bsd/dev/redwood_camera.c	standard
-+bsd/dev/redwood_mic.c		standard
-+bsd/dev/redwood_wifi.c		standard
++bsd/dev/redwood_camera.c		standard
++bsd/dev/redwood_mic.c			standard
++bsd/dev/redwood_wifi.c			standard
 +bsd/dev/redwood_adsp.c		standard
-+bsd/dev/redwood_image.c		standard
-+bsd/dev/redwood_virtio_blk.c	standard
-+bsd/dev/redwood_sparse.c	standard
-+bsd/dev/redwood_apfs_check.c	optional apfs
++bsd/dev/redwood_image.c			standard
++bsd/dev/redwood_virtio_blk.c		standard
++bsd/dev/redwood_sparse.c		standard
++bsd/dev/redwood_apfs_check.c		optional apfs
 +bsd/dev/redwood_sound.c		standard
-+bsd/dev/redwood_qmi.c		standard
++bsd/dev/redwood_qmi.c			standard
 +bsd/dev/redwood_wlfw.c		standard
-+bsd/dev/redwood_lx.c		standard
++bsd/dev/redwood_lx.c			standard
 +bsd/dev/redwood_sta.c		standard
++bsd/dev/dreamlte_uart.c		standard
++bsd/dev/dreamlte_fb.c			standard
++bsd/dev/dreamlte_timer.c		standard
++bsd/dev/dreamlte_gic.c			standard
++bsd/dev/dreamlte_ufs.c			standard
++bsd/dev/dreamlte_ts.c			standard
++bsd/dev/dreamlte_pm.c			standard
++bsd/dev/dreamlte_display.c		standard
++bsd/dev/dreamlte_i2c.c			standard
  bsd/dev/dev_perfmon.c optional config_perfmon
  
  bsd/libkern/crc32.c			standard
@@ -114,7 +123,7 @@ index 44274016a4cf..9cd24b42caca 100644
 +bsd/miscfs/apfs/apfs_store.c		optional apfs
 +bsd/miscfs/apfs/apfs_vfsops.c		optional apfs
 +bsd/miscfs/apfs/apfs_vnops.c		optional apfs
-+bsd/miscfs/ramfs/ramfs.c			optional ramfs
++bsd/miscfs/ramfs/ramfs.c		optional ramfs
  
  bsd/miscfs/routefs/routefs_ops.c	optional routefs
  
@@ -356,7 +365,7 @@ diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
 index 4df41ba1f61b..16cf4fd8d8f1 100644
 --- a/bsd/kern/bsd_init.c
 +++ b/bsd/kern/bsd_init.c
-@@ -147,6 +147,13 @@
+@@ -147,6 +147,17 @@
  #include <net/if_ether.h>               /* for ether_family_init() */
  #include <net/if_gif.h>                 /* for gif_init() */
  #include <miscfs/devfs/devfsdefs.h>     /* for devfs_kernel_mount() */
@@ -364,6 +373,14 @@ index 4df41ba1f61b..16cf4fd8d8f1 100644
 +#include <sys/redwood_audio.h>
 +#include <sys/redwood_virtio_blk.h>
 +#include <sys/redwood_sparse.h>
++#include <sys/dreamlte_uart.h>
++#include <sys/dreamlte_fb.h>
++#include <sys/dreamlte_timer.h>
++#include <sys/dreamlte_gic.h>
++#include <sys/dreamlte_ts.h>
++#include <sys/dreamlte_pm.h>
++#include <sys/dreamlte_display.h>
++#include <sys/dreamlte_i2c.h>
 +#if APFS
 +#include <sys/redwood_apfs_check.h>
 +#endif
@@ -373,20 +390,29 @@ index 4df41ba1f61b..16cf4fd8d8f1 100644
 @@ -490,7 +497,7 @@ bsd_init(void)
  	platform_stall_panic_or_spin(PLATFORM_STALL_XNU_LOCATION_BSD_INIT);
  #endif
- 
+
 -#define DEBUG_BSDINIT 0
 +#define DEBUG_BSDINIT 1 /* bring-up: trace bsd_init steps (only visible with -enable_kprintf_spam) */
- 
+
  #if DEBUG_BSDINIT
  #define bsd_init_kprintf(x, ...) kprintf("bsd_init: " x, ## __VA_ARGS__)
-@@ -976,6 +983,14 @@ bsd_init(void)
- 
+@@ -976,6 +983,20 @@ bsd_init(void)
+
  		bsd_init_kprintf("calling devfs_kernel_mount\n");
  		devfs_kernel_mount(mounthere);
 +		redwood_input_init();           /* /dev/redwood-touch */
 +		redwood_audio_init();           /* /dev/redwood-audio */
 +		redwood_virtio_blk_init();      /* /dev/rvblk0, a disk image of the host (QEMU) */
 +		redwood_sparse_init();          /* /dev/rsp0, part of an image too big to hold */
++		dreamlte_uart_init(0x13800000); /* Exynos UART0 for early boot */
++		dreamlte_timer_init();          /* ARM generic timer + Exynos PWM timers */
++		dreamlte_gic_init(0x2C000000, 0x2C080000); /* GICv3 distributor and redistributor */
++		dreamlte_ufs_init();            /* Exynos UFS host controller */
++		dreamlte_i2c_init_channel(0, 400); /* I2C channel 0 @ 400kHz for touchscreen */
++		dreamlte_ts_init(1440, 2960);   /* Galaxy S8 touchscreen (1440x2960) */
++		dreamlte_ts_device_init();      /* Create /dev/dreamlte-touch */
++		dreamlte_pm_init();             /* Exynos power management (DVFS, idle, thermal) */
++		dreamlte_display_init(0xE1000000, 1440, 2960, 5760); /* Exynos DECON/MIPI-DSI display */
 +#if APFS
 +		/* mounts and walks /dev/rvblk0 once userland has /private/var up */
 +		redwood_apfs_check_init();

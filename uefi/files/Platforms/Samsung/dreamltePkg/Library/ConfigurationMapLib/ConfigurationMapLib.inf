@@ -1,0 +1,21 @@
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = ConfigurationMapLib
+  FILE_GUID                      = 8b7f3a2c-5d4e-6f7a-8b9c-0d1e2f3a4b5c
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = ConfigurationMapLib
+  CONSTRUCTOR                    = ConfigurationMapLibConstructor
+  DEPEX                          = gEfiMemoryMapGuid
+
+[Sources]
+  ConfigurationMapLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
