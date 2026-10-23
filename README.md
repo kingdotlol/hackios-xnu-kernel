@@ -42,7 +42,7 @@ Do not assume an `SM-G950*` model suffix alone proves the SoC.
 ## Host-Only Kernel Build (macOS with Xcode toolchain)
 
 ```sh
-cd /Users/radumoise/Desktop/hackios-xnu-kernel/xnu-src/xnu-8796.121.2
+cd ~/hackios-xnu-kernel/xnu-src/xnu-8796.121.2
 
 SDKROOT="$(xcrun --sdk iphoneos --show-sdk-path)"
 make SDKROOT="$SDKROOT" \
@@ -51,7 +51,7 @@ make SDKROOT="$SDKROOT" \
   ARCH_CONFIGS=ARM64 \
   MACHINE_CONFIGS=DREAMLTE \
   KERNEL_CONFIGS=DEVELOPMENT \
-  2>&1 | tee /tmp/dreamlte-ios-build.log
+  2>&1 | tee ~/dreamlte-ios-build.log
 ```
 
 Verify output:
