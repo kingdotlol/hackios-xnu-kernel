@@ -18,6 +18,12 @@ load_device "$1"; shift
 skip() { [[ " $SKIP " == *" $1 "* ]]; }
 mkdir -p out
 
+# Machine config per device: dreamlte → DREAMLTE, redwood → BCM2837
+case "$DEVICE" in
+  dreamlte) MACHINE=DREAMLTE; KERNEL_REL="DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte";;
+  *)        MACHINE=BCM2837;  KERNEL_REL="DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837";;
+esac
+
 if ! skip kernel; then
 	if [ -d "${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk" ] && command -v clang >/dev/null; then
 		[ -d xnu-src ] || xnu/apply.sh
@@ -26,10 +32,14 @@ if ! skip kernel; then
 		[ "$WIFI_ATH11K" = 1 ] && [ ! -f xnu-deps/build/ath11k/out/ath11k.o ] && { tools/mk-ath11k.sh && tools/mk-wlfw.sh; }
 		# the export check fails after the kernel is linked, on purpose (xnu/README.md): judge by the file
 		touch out/.kernel-start
-		./xnu-build.sh -j"$(nproc)" -k > out/kernel-build.log 2>&1 || true
-		K=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837
-		[ -f $K ] && { [ $K -nt out/.kernel-start ] || ! grep -q "error:" out/kernel-build.log; } &&
-			echo "build: kernel $(stat -c %s $K) bytes" || die "kernel build failed, see out/kernel-build.log"
+		MACHINE=$MACHINE ./xnu-build.sh -j"$(nproc)" -k > out/kernel-build.log 2>&1 || true
+		K=xnu-src/xnu-8796.121.2/BUILD/obj/$KERNEL_REL
+		if [ -f $K ] && { [ $K -nt out/.kernel-start ] || ! grep -q "error:" out/kernel-build.log; }; then
+			if [ "$(uname)" = Darwin ]; then K_SZ=$(stat -f %z "$K"); else K_SZ=$(stat -c %s "$K"); fi
+			echo "build: kernel $K_SZ bytes"
+		else
+			die "kernel build failed, see out/kernel-build.log"
+		fi
 	else
 		echo "build: no theos/iPhoneOS16.5.sdk: using prebuilt/mach.development.bcm2837"
 	fi
