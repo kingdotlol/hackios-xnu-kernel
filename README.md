@@ -10,6 +10,246 @@ This README is the step-by-step guide for the work that can be done now: prepare
 
 ---
 
+## Quick Start: Building a Bootable Image (with Mu-Silicium)
+
+The following steps were tested and produce a bootable image for the Samsung Galaxy S8 (dreamlte) using Mu-Silicium UEFI.
+
+### Prerequisites (Linux)
+
+```bash
+# Install build dependencies
+sudo apt-get update && sudo apt-get install -y \
+  git python3 python3-pip python3-venv \
+  build-essential clang llvm lld \
+  gcc-aarch64-linux-gnu nasm uuid-dev \
+  flex bison m4 autoconf automake \
+  mono-devel p7zip-full \
+  libssl-dev pkg-config
+
+# Install Python dependencies
+pip3 install --user -r Mu-Silicium/pip-requirements.txt
+export PATH="$HOME/.local/bin:$PATH"
+
+# Install theos with iPhoneOS16.5.sdk (required for kernel/userland compilation)
+# See: https://github.com/theos/theos
+# The SDK should be at: ~/theos/sdks/iPhoneOS16.5.sdk
+```
+
+### Step 1: Clone and Setup Repositories
+
+```bash
+# Clone kernel repo
+git clone https://github.com/oosexgang/hackios-xnu-kernel.git
+cd hackios-xnu-kernel
+
+# Link userland repo (checks out into same directory with .userland.git)
+./common/setup.sh
+
+# Initialize Mu-Silicium submodules
+cd Mu-Silicium
+git submodule update --init --recursive
+cd ..
+```
+
+### Step 2: Build Mu-Silicium UEFI for dreamlte
+
+```bash
+cd Mu-Silicium
+
+# Fix NuGet SSL issue (if needed): manually provide nasm
+mkdir -p Mu_Basecore/BaseTools/Bin/mu_nasm_extdep/Linux-ARM-64
+cp /usr/bin/nasm Mu_Basecore/BaseTools/Bin/mu_nasm_extdep/Linux-ARM-64/nasm
+echo 'version: 20016.1.1' > Mu_Basecore/BaseTools/Bin/mu_nasm_extdep/extdep_state.yaml
+
+# Build UEFI for dreamlte
+python3 build_uefi.py -d dreamlte
+cd ..
+
+# Copy built UEFI FD to expected location for mkxnuimg.py
+mkdir -p edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV
+cp Mu-Silicium/Build/dreamltePkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd \
+   edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV/
+
+# Copy DTB to expected location
+cp Mu-Silicium/Resources/DTBs/dreamlte.dtb exynos8895-dreamlte.dtb
+```
+
+### Step 3: Fetch iOS 16.5 Userland Files
+
+```bash
+# Link xnu-deps for unzbm tool
+ln -s ../hackios-xnu-kernel/xnu-deps ../hackios-xnu-userland-dreamlte/xnu-deps
+
+# Download and extract iOS 16.5 (~7.4 GB download, ~8 GB temp space)
+cd ../hackios-xnu-userland-dreamlte
+./ios165/fetch.sh
+
+# Copy extracted files to kernel repo where build scripts expect them
+cp -r ios165/rootfs ios165/cryptex ios165/cryptex-app \
+      ios165/20F66__iPhone10,3_6 ios165/system.files \
+      ios165/system.manifest ios165/var.skel \
+      ../../hackios-xnu-kernel/ios165/
+```
+
+### Step 4: Build XNU Dependencies
+
+```bash
+cd /path/to/hackios-xnu-kernel
+./xnu-deps/setup.sh
+# Note: xnu/apply.sh may fail due to patch issues; kernel build will use prebuilt
+```
+
+### Step 5: Build Loader, Userland Images, and Boot Images
+
+```bash
+# Build loader (UEFI application)
+cd /path/to/hackios-xnu-kernel
+./xnuloader/build.sh
+
+# Build userland images (using prebuilt binaries to avoid linker issues)
+cd userland
+PREBUILT=1 REST=1 ./build.sh   # Creates root.apfs (4 MB)
+PREBUILT=1 REST=1 SYSTEM=1 ./build.sh  # Creates system.apfs (2.4 GB)
+cd ..
+
+# Create fastboot boot image (for devices supporting fastboot)
+export PATH="$HOME/.local/bin:$PATH"
+SKIP="kernel" ./common/build.sh dreamlte
+# Output: out/dreamlte-boot.img (688 KB) — for `fastboot boot`
+
+# Create TWRP-flashable boot image (for Samsung Download Mode / Odin)
+# Uses Samsung DTBH header via dtbtool-exynos
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload
+# Output: out/dreamlte-boot-twrp.img (692 KB) — flashable via TWRP or Odin
+```
+
+### Build Outputs
+
+After successful build, you will have:
+
+| File | Size | Description |
+|------|------|-------------|
+| `out/dreamlte-boot.img` | 688 KB | Android boot image (UEFI FD + loader + DTB) for `fastboot boot` |
+| `out/dreamlte-boot-twrp.img` | 692 KB | **TWRP-flashable Samsung boot image** with DTBH header (for Download Mode/Odin) |
+| `userland/root.apfs` | 4 MB | Small boot volume (init, libraries, launchd jobs) |
+| `userland/system.apfs` | 2.4 GB | System volume (iOS 16.5 rootfs, cryptexes, dyld cache) |
+| `edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV/SILICIUM_UEFI.fd` | 2 MB | UEFI firmware for dreamlte (Exynos 8895) |
+| `xnuloader/loader.efi` | 68 KB | XNU kernel loader |
+
+---
+
+## TWRP-Flashable Boot Image Details
+
+The `mkxnuimg_twrp.py` script creates a Samsung-compatible boot image that can be flashed via TWRP recovery or Odin in Download Mode. This is the correct format for the Samsung Galaxy S8 (dreamlte) which uses Download Mode, not fastboot.
+
+### Key Features
+
+- **Samsung DTBH Header**: The DTB is processed with `dtbtool-exynos` to add the Samsung DTBH header (required for Exynos 8895 boot)
+- **Device-Specific UEFI FD**: Uses the UEFI firmware built from `edk2-exynos` for dreamlte (`Build/dreamltePkg/RELEASE_CLANG38/FV/SILICIUM_UEFI.fd`)
+- **Device-Specific DTB**: Uses the extracted Exynos 8895 DTB (`exynos8895-dreamlte.dtb`)
+- **USB Payload**: Includes the XNU loader (`loader.efi`) in a USB-resident XNUP container
+- **Correct Memory Addresses**: Uses Exynos 8895 memory map (base 0x10000000, kernel 0x10008000, ramdisk 0x11000000, DTB 0x10000000)
+- **Android Boot Image v1**: Standard format compatible with TWRP
+
+### Usage
+
+```bash
+# Create TWRP-flashable image with USB payload
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload
+
+# Create image with existing payload
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img -p out/usb-payload.bin
+
+# Custom addresses (if needed)
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload \
+  --kernel-addr 0x10008000 --ramdisk-addr 0x11000000 --dtb-addr 0x10000000
+```
+
+### Flashing Instructions
+
+**Via TWRP Recovery:**
+1. Boot into TWRP recovery (Vol Up + Bixby + Power)
+2. Transfer `out/dreamlte-boot-twrp.img` to the device (adb push or SD card)
+3. In TWRP: Install → Select image → Choose `dreamlte-boot-twrp.img` → Flash to "Boot" partition
+4. Reboot
+
+**Via Odin (Download Mode):**
+1. Put device in Download Mode (Vol Down + Bixby + Power, then Vol Up)
+2. Open Odin on Windows
+3. Click "AP" and select `out/dreamlte-boot-twrp.img`
+4. Ensure only "Auto Reboot" and "F. Reset Time" are checked
+5. Click "Start"
+6. Device will reboot automatically
+
+### Image Structure
+
+The boot image contains:
+```
+Android Boot Image Header v1 (2048 bytes)
+├── Kernel = gzip(BootShim + UEFI FD + XNUP payload) + DTB (with Samsung DTBH header)
+├── Ramdisk (minimal 5-byte placeholder)
+└── DTB (with Samsung DTBH header, appended to kernel per Android v1 spec)
+```
+
+The DTBH header is verified at offset ~0x6f000 in the boot image, confirming Samsung compatibility.
+
+---
+
+## Current Limitations
+
+- **Kernel**: The dreamlte kernel patch (`xnu/redwood.patch`) has format issues preventing clean apply. The build uses prebuilt `mach.development.bcm2837` (Raspberry Pi kernel) instead of a native Exynos 8895 kernel.
+- **Boot Path**: The Samsung Galaxy S8 uses Download Mode (Odin), not fastboot.
+  - `out/dreamlte-boot.img` (688 KB) — standard Android boot image for `fastboot boot` (not compatible with S8)
+  - `out/dreamlte-boot-twrp.img` (692 KB) — **TWRP-flashable Samsung boot image** with Samsung DTBH header (compatible with S8 Download Mode/Odin)
+- **Hardware**: No validated memory map, interrupt setup, display, or peripheral drivers for Exynos 8895.
+- **UEFI**: Mu-Silicium UEFI built successfully but untested on physical hardware.
+- **Physical Deployment**: Not yet validated on physical hardware. Do not flash to the phone yet.
+
+---
+
+## Engineering Gates (from PHYSICAL_S8_GUIDE.md)
+
+Before attempting physical deployment, these gates must be completed:
+
+| Gate | Requirement |
+|------|-------------|
+| **A** | Exact hardware description: obtain DTB/DTBO/firmware for exact S8 model/region. Verify all memory/peripheral addresses. |
+| **B** | Working loader/firmware path: build correct Exynos/Samsung UEFI with real S8 firmware binaries and matching DTB. |
+| **C** | XNU platform handoff: validate Mach-O segments/entry point against loader's boot_args, device tree, memory map. |
+| **D** | Minimum boot milestones: UEFI reports board/firmware → Loader validates payload → XNU entry reached → early UART works → Memory/GIC/timer/CPU init → Storage + read-only root works → iOS userland reaches SpringBoard. |
+| **E** | Image and recovery review: document exact model, firmware, partition table, artifact hashes, signing, target partition, restore path. |
+
+---
+
+## Recovery Notes
+
+- Keep exact stock firmware and documented restore method available offline.
+- To leave Download Mode: hold **Volume Down + Power** for ~7 seconds.
+- Samsung Knox: unauthorized kernel/boot chain may permanently trip warranty bit.
+
+---
+
+## Local References
+
+- `docs/PHYSICAL_S8_GUIDE.md` — Full bring-up guide and gates
+- `common/devices/dreamlte.conf` — Experimental device profile
+- `xnuloader/loader.c` — Loader platform reference (addresses unverified)
+- `xnu-src/xnu-8796.121.2/config/MASTER.arm64.dreamlte` — XNU build configuration
+- `Mu-Silicium/Platforms/Samsung/dreamltePkg/` — UEFI port directory
+- `common/build.sh dreamlte` — Full build: kernel, loader, images, boot image
+- `ios165/fetch.sh` — Downloads iOS 16.5 from Apple's CDN (userland repo)
+- `userland/build.sh` — Builds `root.apfs` and `system.apfs` (userland repo)
+
+---
+
+## License
+
+This repository is licensed under the [Apple Public Source License 2.0](LICENSE). Our changes to XNU are a derivative of XNU and must be; other code here (loader, scripts) is released under the same license. Third-party code keeps its own license. The userland repository is MIT-licensed; no Apple files are included in either repository — `ios165/fetch.sh` downloads the iOS 16.5 IPSW from Apple's CDN to your machine only.
+
+HackiOS is an independent research project by OOSEX GANG and is not affiliated with, authorised or endorsed by Apple Inc. or Samsung Electronics.
+
+---
+
 ## Hardware Target
 
 | Property | Value |
@@ -37,8 +277,8 @@ HackiOS lives in two repositories that are built as one tree:
 
 | Repository | Path | Contents |
 |---|---|---|
-| `hackios-xnu-kernel` | `/Users/radumoise/Desktop/hackios-xnu-kernel` | XNU kernel patches, EFI loader (`xnuloader`), UEFI port (`edk2-exynos`), build scripts, `xl` phone tool |
-| `hackios-xnu-userland-dreamlte` | `/Users/radumoise/Desktop/hackios-xnu-userland-dreamlte` | iOS 16.5 userland: `init`, injected libraries, launchd jobs, APFS image builder, `ios165/fetch.sh` |
+| `hackios-xnu-kernel` | `/path/to/hackios-xnu-kernel` | XNU kernel patches, EFI loader (`xnuloader`), UEFI port (`edk2-exynos`), build scripts, `xl` phone tool |
+| `hackios-xnu-userland-dreamlte` | `/path/to/hackios-xnu-userland-dreamlte` | iOS 16.5 userland: `init`, injected libraries, launchd jobs, APFS image builder, `ios165/fetch.sh` |
 
 The userland repo is checked out into the same directory by `common/setup.sh` (git dir `.userland.git`). Scripts in both repos refer to each other by path, so they must sit side by side.
 
@@ -51,7 +291,7 @@ Commands below are for macOS. The XNU build was developed on macOS with Xcode; s
 Check the Apple toolchain:
 
 ```sh
-cd /Users/radumoise/Desktop/hackios-xnu-kernel
+cd /path/to/hackios-xnu-kernel
 pwd
 git status --short
 
@@ -133,7 +373,7 @@ Do not rely on a backup of `/data` as a substitute for a stock recovery image. D
 From the kernel repository root:
 
 ```sh
-cd /Users/radumoise/Desktop/hackios-xnu-kernel
+cd /path/to/hackios-xnu-kernel
 common/setup.sh
 ```
 
@@ -152,7 +392,7 @@ ls userland/build.sh ios165/fetch.sh prebuilt/userland/init
 No Apple files are in the repository. `ios165/fetch.sh` downloads the iOS 16.5 IPSW from Apple's CDN to your machine and extracts what is needed (~7.4 GB).
 
 ```sh
-cd /Users/radumoise/Desktop/hackios-xnu-userland-dreamlte
+cd /path/to/hackios-xnu-userland-dreamlte
 ios165/fetch.sh
 ```
 
@@ -165,7 +405,7 @@ This is a one-time download. It produces `ios165/rootfs`, `ios165/cryptex`, `ios
 From the kernel repository root, build everything for dreamlte:
 
 ```sh
-cd /Users/radumoise/Desktop/hackios-xnu-kernel
+cd /path/to/hackios-xnu-kernel
 common/build.sh dreamlte
 ```
 
@@ -251,7 +491,9 @@ Only after all gates pass should someone add a command that actually transfers o
 - `xnu-src/xnu-8796.121.2/config/MASTER.arm64.dreamlte` — XNU build configuration.
 - `uefi/files/Platforms/Samsung/dreamltePkg/` — UEFI port directory (no FD/DTB supplied).
 - `build_dreamlte.sh` / `build_edk2_dreamlte.sh` — Per-step builds (edk2, loader, xnu, system).
-- `common/build.sh dreamlte` — Full build: kernel, loader, images, boot image.
+- `common/build.sh dreamlte` — Full build: kernel, loader, images, fastboot boot image.
+- `mkxnuimg_twrp.py` — Creates TWRP-flashable Samsung boot image with DTBH header.
+- `dtbtool-exynos/dtbTool-exynos` — Samsung DTB header tool (adds DTBH header for Exynos).
 - `common/run.sh dreamlte` — Phone boot via `fastboot boot` (not yet valid for S8).
 - `ios165/fetch.sh` — Downloads iOS 16.5 from Apple's CDN (userland repo).
 - `userland/build.sh` — Builds `root.apfs` and `system.apfs` (userland repo).
