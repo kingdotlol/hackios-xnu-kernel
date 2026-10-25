@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /usr/bin/clang -target arm64-apple-ios16.5 -isysroot /Users/radumoise/theos/sdks/iPhoneOS16.5.sdk "$@"
+exec /usr/bin/clang -target arm64-apple-ios16.5 -isysroot /Users/radumoise/theos/sdks/iPhoneOS16.5.sdk -include /home/radu/hackios-xnu-kernel/xnu-deps/hostinc/kernel_compat.h "$@"
