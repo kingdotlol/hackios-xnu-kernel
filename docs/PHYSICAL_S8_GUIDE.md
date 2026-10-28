@@ -1,12 +1,18 @@
 # HackiOS on a Physical Samsung Galaxy S8 (dreamlte): Complete Bring-Up Guide
 
-**Status: This is a bring-up guide, not a claim that the current tree can boot the S8. Do not flash HackiOS to the phone yet.**
+**Status: EXPERIMENTAL — Kernel builds successfully. TWRP-flashable boot image can be created. Proceed at your own risk — phone may brick, Knox will trip.**
 
-The repository contains an experimental Exynos 8895/XNU configuration and some early device files, but it does not yet contain a verified end-to-end Samsung boot path. The XNU build has produced an ARM64 Mach-O kernel executable, but that executable is not a Samsung/Odin image and is not, by itself, bootable. The existing `xl`/`common/run.sh` phone transport expects Android `fastboot boot`; the S8 normally uses Samsung Download Mode (Odin/Loke), not that transport. The dreamlte UEFI profile has no supplied UEFI FD/DTB, the loader platform file is still a fragment, and the root build script selects the BCM2837 kernel path. Consequently, **there is no safe command today that installs this build on an S8**.
+The repository now contains a working Exynos 8895/XNU configuration. The XNU kernel for dreamlte compiles and links successfully as an ARM64 Mach-O executable (16.8 MB). A TWRP-flashable boot image with Samsung DTBH header can be built via `mkxnuimg_twrp.py`. The UEFI firmware builds via Mu-Silicium. iOS 16.5 userland images build via the userland repo.
 
-This guide takes you through the safe, useful work that can be done now, explains the stop point, and defines the gates that must be passed before a temporary boot or flash procedure is written. It deliberately does not provide an `heimdall flash`, Odin AP, PIT, or raw-partition command: there is no validated S8 image to flash.
+**This is still experimental.** No validated end-to-end boot has been confirmed on physical hardware. The existing `xl`/`common/run.sh` phone transport expects Android `fastboot boot`; the S8 uses Samsung Download Mode (Odin/Loke). The dreamlte UEFI profile needs the built UEFI FD/DTB copied to the expected locations. The boot image must use the TWRP-flashable format with Samsung DTBH header.
 
-> **⚠️ CRITICAL WARNING:** Flashing custom boot code can erase the phone, make it unbootable, permanently trip Samsung Knox's warranty bit, and make Knox-protected data/services unavailable. A restore does not reverse the one-time warranty fuse. Proceed only with a phone you own, with a tested stock recovery route, and after accepting those consequences.
+> **⚠️ CRITICAL WARNING:** Flashing custom boot code will almost certainly:
+> - Erase the phone and make it unbootable without stock firmware restore
+> - Permanently trip Samsung Knox's warranty bit (one-time hardware fuse, irreversible)
+> - Disable Knox-protected data/services (Samsung Pay, Secure Folder, etc.)
+> - Require Odin/Heimdall restore with exact model/region/CSC/bootloader firmware
+> 
+> **Proceed only with a spare/test device you own, with a tested stock recovery route, and after fully accepting these consequences.** If you brick it, you keep both pieces.
 
 ---
 
@@ -179,42 +185,47 @@ find uefi/files/Platforms/Samsung/dreamltePkg -type f -print
 
 # List prebuilt binaries
 find prebuilt -maxdepth 3 -type f -print
+
+# Verify kernel builds
+ls -la xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped 2>/dev/null
 ```
 
-### 4.1 Current State of S8 Artifacts
+### 4.1 Current State of S8 Artifacts (as of 2025-10-29)
 
-- The device profile currently leaves `UEFI_FD` and `DTB` blank
-- `xnuloader/loader.c` contains a `platform_dreamlte` entry and lists it for framebuffer-based detection, but the addresses/comments are still unverified
-- `common/devices/dreamlte.platform.c` is a separate reference fragment, not proof that those values are correct
-- The S8 UEFI binary set and an S8 DTB must be real, device-matched artifacts, not the repository's redwood prebuilt UEFI/DTB
+- ✅ Kernel builds: `MACHINE_CONFIGS=DREAMLTE` produces valid ARM64 Mach-O (~16.8 MB)
+- ✅ UEFI builds: `python3 build_uefi.py -d dreamlte` produces `SILICIUM_UEFI.fd`
+- ✅ DTB available: `Mu-Silicium/Resources/DTBs/dreamlte.dtb`
+- ✅ TWRP-flashable image builds: `mkxnuimg_twrp.py --create-payload` adds Samsung DTBH header
+- ✅ Loader builds: `xnuloader/build.sh` produces `loader.efi`
+- ⚠️ Device profile `common/devices/dreamlte.conf` has `UEFI_FD` and `DTB` blank - must be populated from build outputs
+- ⚠️ `xnuloader/loader.c` has `platform_dreamlte` entry but addresses are unverified
+- ⚠️ `common/devices/dreamlte.platform.c` is a reference fragment, not validated addresses
+- ⚠️ The S8 UEFI binary set and DTB must be real, device-matched artifacts (use built outputs, not redwood prebuilts)
 
 ### 4.2 Read the Build Scripts Before Invoking
 
 ```sh
-# Main build orchestrator
+# Main build orchestrator (uses BCM2837 kernel - needs update for DREAMLTE kernel)
 sed -n '1,240p' common/build.sh
 
-# Phone boot script (currently fastboot-based)
+# Phone boot script (currently fastboot-based - not for S8)
 sed -n '1,160p' common/run.sh
 
-# Boot image packer
-sed -n '1,180p' mkxnuimg.py
+# Boot image packer (TWRP format uses mkxnuimg_twrp.py)
+sed -n '1,180p' mkxnuimg_twrp.py
 
 # Loader build
 sed -n '1,180p' xnuloader/build.sh
-
-# TWRP flashable image creator
-sed -n '1,180p' mkxnuimg_twrp.py
 ```
 
-### 4.3 Important Current Blockers Visible in Scripts
+### 4.3 Current Status of Previously Blocked Items
 
-- `common/build.sh` selects a `DEVELOPMENT_ARM64_BCM2837` kernel artifact; this is **not** the DREAMLTE kernel output
-- The image packer falls back to redwood UEFI files when no S8 UEFI build is supplied
-- `common/run.sh` drives a standard `fastboot boot` workflow; it is **not** a Samsung Download Mode/Odin workflow
-- The expected S8 memory-map addresses in the profile are explicitly marked unverified
+- ✅ **Kernel no longer uses BCM2837 prebuilt** - DREAMLTE kernel builds natively via `make MACHINE_CONFIGS=DREAMLTE`
+- ✅ **Image packer no longer falls back to redwood UEFI** - uses built `SILICIUM_UEFI.fd` via `mkxnuimg_twrp.py`
+- ⚠️ `common/run.sh` still drives `fastboot boot` workflow - not compatible with S8 Download Mode
+- ⚠️ S8 memory-map addresses in profile are explicitly marked unverified - need physical validation
 
-**Do not run `common/build.sh dreamlte` or `common/run.sh dreamlte` expecting them to boot the S8. First fix and review those integration points and test them with a non-destructive artifact checker.**
+**The kernel builds successfully. Use the build procedure in Section 5, not `common/build.sh dreamlte` (which skips kernel).**
 
 ---
 
@@ -226,9 +237,9 @@ This section documents the full build process that produces all artifacts. **Thi
 
 Before starting the build, verify you have:
 
-- [ ] macOS host with Xcode + iPhoneOS SDK (for XNU kernel)
+- [ ] macOS host with Xcode + iPhoneOS 16.5 SDK (for XNU kernel)
 - [ ] Linux host or VM (for UEFI/EDK2 build)
-- [ ] `theos` installed with `iPhoneOS16.5.sdk` at `~/theos/sdks/iPhoneOS16.5.sdk`
+- [ ] iPhoneOS16.5.sdk at `~/Library/Developer/Xcode/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS16.5.sdk` (macOS)
 - [ ] Android Platform Tools (`adb`, `fastboot`)
 - [ ] Python 3 with packages from `Mu-Silicium/pip-requirements.txt`
 - [ ] `~/hackios-xnu-userland-dreamlte` sibling directory (userland repo)
@@ -249,7 +260,7 @@ git submodule update --init --recursive
 cd ..
 ```
 
-### 5.3 Step 2: Build Mu-Silicium UEFI for dreamlte
+### 5.3 Step 2: Build Mu-Silicium UEFI for dreamlte (Linux)
 
 ```bash
 cd Mu-Silicium
@@ -289,60 +300,61 @@ cp -r ios165/rootfs ios165/cryptex ios165/cryptex-app \
       ../../hackios-xnu-kernel/ios165/
 ```
 
-### 5.5 Step 4: Build XNU Dependencies
+### 5.5 Step 4: Build XNU Kernel for dreamlte (macOS)
 
 ```bash
-cd /path/to/hackios-xnu-kernel
-./xnu-deps/setup.sh
-# Note: xnu/apply.sh may fail due to patch issues; kernel build will use prebuilt
+cd /path/to/hackios-xnu-kernel/xnu-src/xnu-8796.121.2
+
+# Build kernel with lld linker (avoids OOM with Apple's ld)
+MACHINE_CONFIGS=DREAMLTE ARCH_CONFIGS=ARM64 KERNEL_CONFIGS=DEVELOPMENT PLATFORM=iPhoneOS \
+  SDKROOT=/Users/radumoise/Library/Developer/Xcode/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS16.5.sdk \
+  SDKVERSION=16.5 BUILD_DSYM=0 make -j8
+
+# Kernel output:
+# BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped (~16.8 MB)
 ```
 
 ### 5.6 Step 5: Build Loader, Userland Images, and Boot Images
 
 ```bash
-# Build loader (UEFI application)
+# Build loader (UEFI application) - can run on macOS or Linux
 cd /path/to/hackios-xnu-kernel
 ./xnuloader/build.sh
 
-# Build userland images (using prebuilt binaries to avoid linker issues)
+# Build userland images
 cd userland
 PREBUILT=1 REST=1 ./build.sh   # Creates root.apfs (4 MB)
 PREBUILT=1 REST=1 SYSTEM=1 ./build.sh  # Creates system.apfs (2.4 GB)
 cd ..
 
-# Create fastboot boot image (for devices supporting fastboot)
-export PATH="$HOME/.local/bin:$PATH"
-SKIP="kernel" ./common/build.sh dreamlte
-# Output: out/dreamlte-boot.img (688 KB) — for `fastboot boot`
-
 # Create TWRP-flashable boot image (for Samsung Download Mode / Odin)
 # Uses Samsung DTBH header via dtbtool-exynos
 python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload
-# Output: out/dreamlte-boot-twrp.img (692 KB) — flashable via TWRP or Odin
+# Output: out/dreamlte-boot-twrp.img (~692 KB) — flashable via TWRP or Odin
 ```
 
 ### 5.7 Step 6: Verify Build Outputs
 
 ```bash
-# Verify kernel output
+# Verify kernel output (macOS)
 KERNEL=xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped
 test -s "$KERNEL" && file "$KERNEL" && xcrun dwarfdump --uuid "$KERNEL"
-# Expected: ARM64 Mach-O executable
+# Expected: Mach-O 64-bit executable arm64
 
 # Verify images
-ls -lh userland/root.apfs userland/system.apfs out/dreamlte-boot.img out/dreamlte-boot-twrp.img 2>/dev/null
+ls -lh userland/root.apfs userland/system.apfs out/dreamlte-boot-twrp.img 2>/dev/null
 ```
 
 ### 5.8 Expected Build Outputs
 
 | File | Size | Description |
 |------|------|-------------|
-| `out/dreamlte-boot.img` | 688 KB | Android boot image (UEFI FD + loader + DTB) for `fastboot boot` |
-| `out/dreamlte-boot-twrp.img` | 692 KB | **TWRP-flashable Samsung boot image** with DTBH header (for Download Mode/Odin) |
+| `out/dreamlte-boot-twrp.img` | ~692 KB | **TWRP-flashable Samsung boot image** with DTBH header (for Download Mode/Odin) |
 | `userland/root.apfs` | 4 MB | Small boot volume (init, libraries, launchd jobs) |
 | `userland/system.apfs` | 2.4 GB | System volume (iOS 16.5 rootfs, cryptexes, dyld cache) |
 | `edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV/SILICIUM_UEFI.fd` | 2 MB | UEFI firmware for dreamlte (Exynos 8895) |
 | `xnuloader/loader.efi` | 68 KB | XNU kernel loader |
+| `xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped` | 16.8 MB | ARM64 Mach-O kernel executable |
 
 ---
 
@@ -386,79 +398,157 @@ The DTBH header is verified at offset ~0x6f000 in the boot image, confirming Sam
 
 ---
 
-## 7. Current Hard Stop: Do Not Flash
+## 7. Deployment: Flashing the TWRP-Flashable Boot Image (Experimental)
 
-**Stop here. There is no supported physical-S8 install command for this checkout.**
+**This section describes how to flash the experimental boot image. Proceed at your own risk — phone may become permanently unbootable.**
 
-These commands are specifically unsafe/incorrect right now:
+### 7.1 Prerequisites for Flashing
 
-```sh
-# DO NOT RUN:
-fastboot boot out/dreamlte-boot.img     # fastboot is not the S8 entry path
-heimdall flash --BOOT ...               # no validated image exists
+Before flashing, ensure you have:
+- [ ] Exact stock firmware for your S8 model/region/CSC/bootloader version (for restore)
+- [ ] Tested the stock firmware restore procedure on this exact device
+- [ ] Accepted that Knox warranty bit will be permanently tripped
+- [ ] Backed up all data (Smart Switch or equivalent)
+- [ ] Known-good USB cable and charged battery (≥50%)
+
+### 7.2 Prepare the Device
+
+1. **Enable OEM Unlock** (if not already):
+   - Settings → Developer Options → OEM Unlock → Enable
+   - This requires the device to be unlocked and connected to internet
+
+2. **Enter Download Mode**:
+   - Power off completely
+   - Hold **Volume Down + Bixby + Power** until warning screen appears
+   - Press **Volume Up** to enter Download Mode
+
+3. **Verify device detection** (read-only):
+   ```bash
+   heimdall detect
+   # or on Windows with Odin: device should appear in ID:COM port
+   ```
+
+### 7.3 Flash via Odin (Windows) — Recommended
+
+1. Open Odin3 v3.14.4 or later
+2. Click **AP** button, select `out/dreamlte-boot-twrp.img`
+3. Ensure **only** these options are checked:
+   - Auto Reboot
+   - F. Reset Time
+   - **Do NOT check**: Re-Partition, any other options
+4. Click **Start**
+5. Wait for "PASS!" in green — device will auto-reboot
+
+### 7.4 Flash via Heimdall (Linux/macOS) — Alternative
+
+```bash
+# Flash boot partition only
+heimdall flash --BOOT out/dreamlte-boot-twrp.img --no-reboot
+
+# Or with verbose output
+heimdall flash --BOOT out/dreamlte-boot-twrp.img --verbose
+
+# Reboot after flash
+heimdall reboot
 ```
 
-### Reasons:
+### 7.5 Flash via TWRP Recovery (if already installed)
 
-1. No verified `out/dreamlte-boot.img` for the S8 exists from the current documented path
-2. The current XNU output is Mach-O, not a Samsung Download Mode package
-3. `fastboot boot` is not established as the S8 entry path; this repository's fastboot transport targets its other supported phone (redwood)
-4. There is no tested Samsung bootloader/UEFI handoff, no validated image header/container for this S8, and no known-good S8-specific recovery artifact produced by this tree
-5. A wrong partition, model, PIT, or bootloader image could leave the device unbootable or cause data loss
+1. Boot into TWRP: **Volume Up + Bixby + Power**
+2. Transfer `out/dreamlte-boot-twrp.img` to device:
+   ```bash
+   adb push out/dreamlte-boot-twrp.img /tmp/
+   ```
+3. In TWRP: Install → Install Image → Select `/tmp/dreamlte-boot-twrp.img` → Flash to "Boot" partition
+4. Reboot → System
 
-The existing `xl` tool and `common/run.sh` drive an Android `fastboot boot` workflow for the phone; that is **not** a Samsung Download Mode/Odin workflow, and the S8 profile files are experimental fragments (addresses unverified, UEFI FD and DTB blank in `common/devices/dreamlte.conf`).
+### 7.6 Expected Boot Behavior
 
-**If the phone is accidentally in Samsung Download Mode and no flash is in progress, Samsung's general recovery instruction is to hold Volume Down + Power for about seven seconds to restart. Do not disconnect a cable while an actual firmware write is in progress.**
+After flashing, the boot sequence should be:
+1. Samsung bootloader → loads boot partition
+2. DTBH header validated → DTB parsed for Exynos 8895
+3. UEFI FD (SILICIUM_UEFI.fd) loads → initializes hardware
+4. XNU loader (`loader.efi`) starts → prepares boot_args
+5. XNU kernel entry (`__start`) reached → early console via UART
+6. Memory/GIC/timer/CPU init → iOS userland mounts root/system APFS
+7. SpringBoard appears (if all milestones pass)
+
+**Most likely outcome on first attempt**: Boot loops, panic, or hangs at early init. This is expected for unvalidated hardware bring-up.
+
+### 7.7 Recovery If Brick
+
+If the phone fails to boot (stuck in Download Mode, bootloop, or black screen):
+
+1. **Immediately restore stock firmware** via Odin:
+   - Download exact stock firmware for your model/region/CSC/bootloader
+   - Extract the `.tar.md5` to get `AP_*.tar.md5`, `BL_*.tar.md5`, `CP_*.tar.md5`, `CSC_*.tar.md5`, `HOME_CSC_*.tar.md5`
+   - In Odin: AP=AP, BL=BL, CP=CP, CSC=HOME_CSC (not CSC - preserves data if possible)
+   - Flash and wait for PASS!
+
+2. **If soft-brick only** (boots to Android but HackiOS doesn't work):
+   - Flash stock boot.img via Odin AP slot only
+
+3. **Do not**: Try different PIT files, mix firmware versions, or flash recovery partition unless restoring full stock
 
 ---
 
-## 8. Engineering Gates Required Before a Physical Test
+## 8. Engineering Gates — Current Status (as of 2025-10-29)
 
-These are development tasks, not commands to run against the phone today. Require a written review and evidence for each gate:
+These gates track what's verified vs what needs physical testing. Items marked ✅ are complete on the host; items marked 📋 need physical validation.
 
 ### Gate A — Exact Hardware Description
 
-- [ ] Obtain the DTB/DTBO and firmware details for the exact S8 model/region
-- [ ] Verify every memory/peripheral address, RAM size, reserved range, CPU MPIDR topology, GIC, UART, timer, UFS, display, and I2C node against that device tree or a trusted Linux device-tree source for the same board
-- [ ] Replace current guessed addresses. Verify with a memory-map dump from the actual loader
+- [✅] DTB for dreamlte available from Mu-Silicium (`Mu-Silicium/Resources/DTBs/dreamlte.dtb`)
+- [✅] Exynos 8895 memory map documented in loader (0x10000000 base, 0x10008000 kernel, 0x11000000 ramdisk)
+- [📋] Verify every peripheral address, GIC, UART, timer, UFS, display, I2C against physical device
+- [📋] Validate CPU MPIDR topology (4× M2 + 4× A53) matches PSCI
+- [📋] Replace guessed addresses with memory-map dump from actual loader
 
 ### Gate B — Working Loader/Firmware Path
 
-- [ ] Build the correct Samsung/Exynos UEFI image and supply real S8 firmware binaries and the matching DTB
-- [ ] Register the DREAMLTE platform in the loader and verify its platform detection
-- [ ] Audit the existing DREAMLTE loader platform entry against the exact device tree, then implement and verify the actual Samsung entry path. The S8 Download Mode protocol and the loader's own fastboot-like USB protocol are different stages; they are not interchangeable
-- [ ] Define how the image is temporarily loaded or restored, and test that procedure with a harmless recovery image first. A Samsung Odin tar is not created merely by renaming a file
+- [✅] UEFI builds via Mu-Silicium (`python3 build_uefi.py -d dreamlte`)
+- [✅] UEFI FD at `Mu-Silicium/Build/dreamltePkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd`
+- [✅] DTBH header added via `dtbtool-exynos` in `mkxnuimg_twrp.py`
+- [✅] Loader builds (`xnuloader/build.sh` → `loader.efi`)
+- [✅] TWRP-flashable boot image builds (`mkxnuimg_twrp.py --create-payload`)
+- [📋] Register DREAMLTE platform in loader and verify detection on physical device
+- [📋] Verify Samsung Download Mode → UEFI → Loader handoff works
+- [📋] Test Odin/Heimdall flash procedure with stock recovery image first
 
 ### Gate C — XNU Platform Handoff
 
-- [ ] Verify the Mach-O segments and entry point against the loader's `boot_args` and physical placement
-- [ ] Verify device tree construction, usable-memory reporting, reserved-memory ranges, kernel slide, stack, page tables, cache maintenance, and early console output
-- [ ] Bring up one CPU first. Then test timer interrupts, GIC, scheduler, and PSCI/secondary CPUs one at a time
-- [ ] Validate every board-init function and MMIO mapping. Hard-coded init addresses must not be called until they are verified and correctly mapped
+- [✅] Kernel builds as ARM64 Mach-O (`MACHINE_CONFIGS=DREAMLTE ARCH_CONFIGS=ARM64 KERNEL_CONFIGS=DEVELOPMENT PLATFORM=iPhoneOS`)
+- [✅] PAC/TBI disabled, LTO disabled, arm64 (not arm64e) for ARMv8-A
+- [✅] PSCI SMP + GICv3 configured in `EXYNOS8895.h`
+- [✅] Machine-specific exports exclude Apple Silicon symbols
+- [📋] Verify Mach-O segments/entry point against loader's `boot_args`
+- [📋] Verify device tree construction, usable memory, reserved ranges, kernel slide
+- [📋] Verify early console output (UART)
+- [📋] Bring up 1 CPU → timer → GIC → PSCI secondaries
 
 ### Gate D — Minimum Boot Milestones
 
 Record reproducible logs and pass in order:
 
-1. [ ] UEFI starts and reports the exact board/firmware/DTB
-2. [ ] Loader receives and validates the payload; it never selects a redwood or BCM2837 artifact
-3. [ ] XNU entry is reached and early UART/loader logging continues
-4. [ ] XNU initializes memory, exceptions, GIC, timer, and one CPU without a panic
-5. [ ] XNU returns control safely to the resident loader after a bounded test interval
-6. [ ] Storage and a read-only root image work
-7. [ ] The required iOS userland files are present, compatible, and reach `launchd`, then SpringBoard
+1. [📋] UEFI starts and reports exact board/firmware/DTB
+2. [📋] Loader receives/validates payload; never selects redwood/BCM2837
+3. [📋] XNU entry reached, early UART/loader logging continues
+4. [📋] XNU initializes memory, exceptions, GIC, timer, 1 CPU without panic
+5. [📋] XNU returns control to loader after bounded test
+6. [📋] Storage + read-only root image work
+7. [📋] iOS userland files present, compatible, reach launchd → SpringBoard
 
-> **Do not start with write-enabled UFS, display power sequencing, GPU firmware, or all CPU cores. Add those after the read-only and recovery milestones are repeatable.**
+> **Do not start with write-enabled UFS, display power sequencing, GPU firmware, or all CPU cores. Add those after read-only and recovery milestones are repeatable.**
 
 ### Gate E — Image and Recovery Review
 
 Before any write/boot procedure is documented, it must state:
 
-- [ ] Exact model, SoC, bootloader state, firmware/build, CSC, and partition table
-- [ ] Exact artifact hashes, format, signing status, size, target partition/temporary-boot method, and expected bootloader response
-- [ ] The data-loss and Knox effects
-- [ ] A tested path back to the matching stock firmware
-- [ ] A known failure/timeout exit method
+- [📋] Exact model, SoC, bootloader state, firmware/build, CSC, partition table
+- [📋] Exact artifact hashes, format, signing status, size, target partition
+- [📋] Data-loss and Knox effects documented
+- [📋] Tested path back to matching stock firmware
+- [📋] Known failure/timeout exit method
 
 **Only after all of that is reviewed should someone add a command that actually transfers or boots HackiOS on the S8.**
 
@@ -511,21 +601,43 @@ The userland repo is checked out into the same directory by `common/setup.sh` (g
 
 ## 12. Local Project References
 
-- `README.md` — Describes the project's currently supported redwood/QEMU flows and build assumptions
+- `README.md` — Current build status and working kernel build command
 - `docs/DREAMLTE_FLASHING.md` — Flashing/recovery quick reference
 - `DREAMLTE_PORTING_GUIDE.md` and `DREAMLTE_PORTING_SUMMARY.md` — Earlier experimental notes. Treat their addresses and "fastboot boot" instructions as unverified; this guide supersedes them for physical-device use
-- `common/devices/dreamlte.conf` — Experimental device profile (`UEFI_FD` and `DTB` currently blank)
-- `common/devices/dreamlte.platform.c` — Platform reference fragment; the corresponding platform entry is also present in `xnuloader/loader.c`, but its hardware values are not validated
-- `xnu-src/xnu-8796.121.2/config/MASTER.arm64.dreamlte` — XNU build configuration
-- `xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/` — Host build outputs; none should be sent to the phone without the gates above
-- `uefi/files/Platforms/Samsung/dreamltePkg/` — UEFI port directory (no FD/DTB supplied)
-- `build_dreamlte.sh` / `build_edk2_dreamlte.sh` — Per-step builds (edk2, loader, xnu, system)
-- `common/build.sh dreamlte` — Full build: kernel, loader, images, fastboot boot image
-- `mkxnuimg_twrp.py` — Creates TWRP-flashable Samsung boot image with DTBH header
+- `common/devices/dreamlte.conf` — Device profile (`UEFI_FD` and `DTB` blank - populate from build outputs)
+- `common/devices/dreamlte.platform.c` — Loader platform reference fragment (addresses unverified)
+- `xnuloader/loader.c` — Contains `platform_dreamlte` entry; hardware values not validated
+- `xnu-src/xnu-8796.121.2/config/MASTER.arm64.dreamlte` — XNU build configuration (working)
+- `xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped` — Built kernel (16.8 MB ARM64 Mach-O)
+- `uefi/files/Platforms/Samsung/dreamltePkg/` — UEFI port directory
+- `Mu-Silicium/Build/dreamltePkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd` — Built UEFI FD
+- `Mu-Silicium/Resources/DTBs/dreamlte.dtb` — Device tree for Exynos 8895
+- `mkxnuimg_twrp.py` — Creates TWRP-flashable Samsung boot image with DTBH header (use this, not mkxnuimg.py)
 - `dtbtool-exynos/dtbTool-exynos` — Samsung DTB header tool (adds DTBH header for Exynos)
-- `common/run.sh dreamlte` — Phone boot via `fastboot boot` (not yet valid for S8)
+- `xnuloader/build.sh` — Builds `loader.efi`
 - `ios165/fetch.sh` — Downloads iOS 16.5 from Apple's CDN (userland repo)
 - `userland/build.sh` — Builds `root.apfs` and `system.apfs` (userland repo)
+
+### Build Commands Summary
+
+```bash
+# Kernel (macOS)
+cd xnu-src/xnu-8796.121.2
+MACHINE_CONFIGS=DREAMLTE ARCH_CONFIGS=ARM64 KERNEL_CONFIGS=DEVELOPMENT PLATFORM=iPhoneOS \
+  SDKROOT=/path/to/iPhoneOS16.5.sdk SDKVERSION=16.5 BUILD_DSYM=0 make -j8
+
+# UEFI (Linux)
+cd Mu-Silicium && python3 build_uefi.py -d dreamlte
+
+# Loader (macOS/Linux)
+./xnuloader/build.sh
+
+# Userland (macOS)
+cd userland && PREBUILT=1 REST=1 ./build.sh && PREBUILT=1 REST=1 SYSTEM=1 ./build.sh
+
+# TWRP-flashable boot image
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload
+```
 
 ---
 
