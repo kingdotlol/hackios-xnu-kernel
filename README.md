@@ -221,6 +221,171 @@ python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload \
 5. Click "Start"
 6. Device will reboot automatically
 
+---
+
+## Step-by-Step: Boot iOS 16.5 on dreamlte (Phone + Computer)
+
+Complete end-to-end sequence from clean build to iOS SpringBoard, with phone connected to computer via USB.
+
+### Prerequisites (One-Time Setup)
+
+**macOS (kernel/userland build):**
+- Xcode + iPhoneOS 16.5 SDK
+- `hackios-xnu-kernel` repo at `/path/to/hackios-xnu-kernel`
+- `hackios-xnu-userland-dreamlte` sibling directory
+
+**Linux (UEFI build):**
+- `Mu-Silicium` submodule initialized
+- `dtbtool-exynos` available
+
+**Phone:**
+- Samsung Galaxy S8 Exynos (dreamlte) — verify `adb shell getprop ro.product.device` = `dreamlte`
+- OEM Unlock enabled (Settings → Developer Options)
+- Stock firmware for exact model/region/CSC downloaded (for recovery)
+- Data backed up
+
+---
+
+### Phase 1: Build All Artifacts (Host)
+
+**1a. Build UEFI + DTB (Linux):**
+```bash
+cd /path/to/hackios-xnu-kernel/Mu-Silicium
+python3 build_uefi.py -d dreamlte
+cd ..
+mkdir -p edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV
+cp Mu-Silicium/Build/dreamltePkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd \
+   edk2-exynos/Build/dreamltePkg/RELEASE_CLANG38/FV/
+cp Mu-Silicium/Resources/DTBs/dreamlte.dtb exynos8895-dreamlte.dtb
+```
+
+**1b. Fetch iOS 16.5 Userland (macOS):**
+```bash
+cd /path/to/hackios-xnu-userland-dreamlte
+./ios165/fetch.sh
+cp -r ios165/rootfs ios165/cryptex ios165/cryptex-app \
+      ios165/20F66__iPhone10,3_6 ios165/system.files \
+      ios165/system.manifest ios165/var.skel \
+      ../../hackios-xnu-kernel/ios165/
+```
+
+**1c. Build XNU Kernel (macOS):**
+```bash
+cd /path/to/hackios-xnu-kernel/xnu-src/xnu-8796.121.2
+MACHINE_CONFIGS=DREAMLTE ARCH_CONFIGS=ARM64 KERNEL_CONFIGS=DEVELOPMENT PLATFORM=iPhoneOS \
+  SDKROOT=/path/to/iPhoneOS16.5.sdk SDKVERSION=16.5 BUILD_DSYM=0 make -j8
+# Output: BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped (~16.8 MB)
+```
+
+**1d. Build Loader + Userland + Boot Image (macOS):**
+```bash
+cd /path/to/hackios-xnu-kernel
+./xnuloader/build.sh
+cd userland
+PREBUILT=1 REST=1 ./build.sh
+PREBUILT=1 REST=1 SYSTEM=1 ./build.sh
+cd ..
+python3 mkxnuimg_twrp.py -o out/dreamlte-boot-twrp.img --create-payload
+# Output: out/dreamlte-boot-twrp.img (~692 KB)
+```
+
+**1e. Verify Outputs:**
+```bash
+# Kernel
+file xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped
+# → Mach-O 64-bit executable arm64
+
+# Images
+ls -lh userland/root.apfs userland/system.apfs out/dreamlte-boot-twrp.img
+```
+
+---
+
+### Phase 2: Flash Boot Image (Phone + Computer)
+
+**2a. Put Phone in Download Mode:**
+```
+Power off → Hold Vol Down + Bixby + Power → Warning screen → Press Vol Up
+```
+
+**2b. Connect USB to Computer** — verify detection:
+```bash
+# Linux/macOS with Heimdall
+heimdall detect
+# Windows with Odin: device appears in ID:COM port
+```
+
+**2c. Flash via Odin (Windows — Recommended):**
+1. Open Odin3
+2. AP → select `out/dreamlte-boot-twrp.img`
+3. Check only: **Auto Reboot** + **F. Reset Time**
+4. Click **Start** → wait for "PASS!" → device reboots
+
+**OR flash via Heimdall (Linux/macOS):**
+```bash
+heimdall flash --BOOT out/dreamlte-boot-twrp.img --verbose
+heimdall reboot
+```
+
+---
+
+### Phase 3: Boot & Monitor (Phone + Computer)
+
+**3a. Watch Serial Console (Critical for Debugging):**
+- Connect USB serial adapter to UART pins (Exynos 8895 UART0 typically on headset jack or test points)
+- `screen /dev/ttyUSB0 115200` or `minicom -D /dev/ttyUSB0 -b 115200`
+- **Alternative:** Watch via ADB if kernel boots far enough:
+  ```bash
+  adb logcat  # only works after Android init, not for early XNU
+  ```
+
+**3b. Expected Boot Sequence (what to watch for):**
+```
+1. Samsung bootloader → "DOWNLOAD MODE" screen disappears
+2. DTBH header validated → DTB parsed
+3. UEFI FD loads → "UEFI Firmware vX.Y" banner
+4. loader.efi starts → "XNU Loader v1.0"
+5. Kernel entry (__start) → early printk "XNU Darwin 16.5.0"
+6. Memory init → "PMAP: 4GB RAM, 4KB pages"
+7. GICv3 init → "GIC: 192 SPIs, 16 PPIs, 16 SGIs"
+8. Timer init → "ARM Arch Timer: 24MHz"
+9. PSCI SMP → "CPU1-7 online"
+10. Root mount → "APFS: rootfs mounted"
+11. launchd → "Service bootstrap complete"
+12. SpringBoard → iOS lock screen appears
+```
+
+**3c. If Boot Fails (Most Likely):**
+- **Stuck at UEFI:** DTB mismatch — verify `dreamlte.dtb` matches your exact model
+- **Stuck at loader:** `boot_args` invalid — check loader platform addresses
+- **Kernel panic:** Memory/GIC/Timer init — add `debug=0x144` to boot args
+- **Bootloop:** Restore stock firmware via Odin (AP+BL+CP+HOME_CSC)
+
+---
+
+### Phase 4: Recovery (If Brick)
+
+```bash
+# 1. Download exact stock firmware for your model/region/CSC/bootloader
+# 2. Extract .tar.md5 → AP, BL, CP, CSC, HOME_CSC
+# 3. Odin: AP=AP, BL=BL, CP=CP, CSC=HOME_CSC (not CSC!)
+# 4. Flash → PASS! → Device boots to stock Android
+```
+
+---
+
+### Key Files Reference
+
+| Artifact | Location | Purpose |
+|----------|----------|---------|
+| Kernel | `xnu-src/xnu-8796.121.2/BUILD/obj/DEVELOPMENT_ARM64_DREAMLTE/mach.development.dreamlte.unstripped` | ARM64 Mach-O executable |
+| UEFI FD | `Mu-Silicium/Build/dreamltePkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd` | Firmware for Exynos 8895 |
+| DTB | `Mu-Silicium/Resources/DTBs/dreamlte.dtb` | Hardware description |
+| Loader | `xnuloader/loader.efi` | UEFI app → prepares boot_args → jumps to kernel |
+| Boot Image | `out/dreamlte-boot-twrp.img` | Flashable via Odin/Heimdall/TWRP |
+| Rootfs | `userland/root.apfs` | iOS 16.5 init + libraries |
+| System | `userland/system.apfs` | iOS 16.5 rootfs + dyld cache |
+
 ### Image Structure
 
 The boot image contains:
